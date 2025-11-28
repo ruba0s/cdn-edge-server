@@ -3,11 +3,17 @@ package server
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"mime"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+)
+
+const (
+	ORIGIN_HOST = "127.0.0.1"
+	ORIGIN_PORT = "4396"
 )
 
 func HandleClient(conn net.Conn) {
@@ -75,7 +81,7 @@ func handleGet(conn net.Conn, reqParts []string) {
 	// Check cache (if cache hit just return the requested file)
 	dat, err := os.ReadFile("/Users/Ruba/Dev/cdn-edge-server/internal/cache/" + filename)
 	if err == nil {
-		// CACHE HIT
+		// Cache hit
 		fmt.Println("Cache hit:", filename)
 
 		// Get file type (for response content type header field)
@@ -100,12 +106,63 @@ func handleGet(conn net.Conn, reqParts []string) {
 		return
 	}
 
-	// If cache miss, request origin server
+	// Cache miss, forward request to origin server
+	connOrigin, err := net.Dial("tcp", ORIGIN_HOST+":"+ORIGIN_PORT)
+	if err != nil {
+		fmt.Println("Error connecting to origin server:", err)
+	}
+	defer connOrigin.Close()
 
-	// Cache the requested file
+	// Send HTTP request to origin
+	fmt.Println("DEBUG filename", filename)
+	originReq := fmt.Sprintf("GET /%s HTTP/1.0\r\nHost: localhost\r\n\r\n", filename)
+	connOrigin.Write([]byte(originReq))
 
-	// Send HTTP response with requested file
+	// Parse origin response
+	originReader := bufio.NewReader(connOrigin)
 
+	// Read origin headers
+	var oHeaders []string
+	for {
+		line, err := originReader.ReadString('\n')
+		if err != nil {
+			fmt.Println("Error reading origin headers:", err)
+			return
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			break // end headers
+		}
+
+		oHeaders = append(oHeaders, line)
+	}
+
+	fmt.Println("Origin headers:", oHeaders)
+
+	// Extract content length, read body of origin http response
+	var contentLength int
+	for _, h := range oHeaders {
+		if strings.HasPrefix(strings.ToLower(h), "content-length:") {
+			fmt.Sscanf(h, "Content-Length: %d", &contentLength)
+		}
+	}
+
+	body := make([]byte, contentLength)
+	_, err = io.ReadFull(originReader, body)
+	if err != nil {
+		fmt.Println("Error reading body:", err)
+		return
+	}
+
+	// Cache the file
+	cachePath := "/Users/Ruba/Dev/cdn-edge-server/internal/cache/" + filename
+	os.WriteFile(cachePath, body, 0644)
+
+	// Forward origin response to clients (response + body)
+	response := strings.Join(oHeaders, "\r\n") + "\r\n\r\n"
+	conn.Write([]byte(response))
+	conn.Write(body)
 }
 
 /*
