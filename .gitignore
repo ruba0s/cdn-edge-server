@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Testing dirs and data
+testing/
+internal/origin
+
+internal/storage/files/*
+internal/storage/uploads/*
+internal/cache/*
+
+!internal/storage/files/.gitkeep
+!internal/storage/uploads/.gitkeep
+!internal/cache/.gitkeep
