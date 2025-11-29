@@ -113,7 +113,7 @@ func ParseResp(reader *bufio.Reader) (*Response, error) {
 	}
 	fmt.Println(headers)
 
-	// Extract content length, read body of http response
+	// Extract content length
 	var contentLength int
 	for _, h := range lines {
 		if strings.HasPrefix(strings.ToLower(h), "content-length:") {
@@ -121,6 +121,7 @@ func ParseResp(reader *bufio.Reader) (*Response, error) {
 		}
 	}
 
+	// TODO: If method isn't HEAD, read body of HTTP response ??
 	body := make([]byte, contentLength)
 	_, err := io.ReadFull(reader, body)
 	if err != nil {

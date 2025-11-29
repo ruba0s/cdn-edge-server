@@ -25,6 +25,7 @@ func HandleClient(conn net.Conn) {
 	req, err := http.ParseReq(reader)
 
 	if err != nil || req == nil {
+		fmt.Println("PANIC HERE LINE 28")
 		panic(err)
 	}
 
@@ -38,91 +39,109 @@ func HandleClient(conn net.Conn) {
 	}
 }
 
-type headResult struct {
-	Resp     *http.Response
-	Filename string
-	CacheHit bool
-}
-
 // handleGet serves an HTTP GET request for the given path using the specified connection.
-// It calls handleHead to obtain metadata and content, writes the body to the connection on a cache
-// hit, and caches the file on a miss.
 func handleGet(conn net.Conn, path string) {
-	res, err := handleHead(conn, path)
+	filename := filepath.Base(path)
+	cachePath := "/Users/Ruba/Dev/cdn-edge-server/internal/cache/" + filename
+
+	// Determine MIME (content-type header value)
+	mimeType := getMimeType(filename)
+
+	dat, err := os.ReadFile(cachePath)
+	if err == nil {
+		// Cache hit
+		resp := http.BuildResponse(200, mimeType, dat)
+		conn.Write([]byte(resp.HeadString()))
+		conn.Write(resp.Body)
+		return
+	}
+
+	// Cache miss, fetch from origin
+	originResp, err := fetchFromOriginGet(filename)
 	if err != nil {
-		panic(err) // ?????!!! replace with returning error respones
+		resp := http.BuildResponse(500, mimeType, nil)
+		conn.Write([]byte(resp.HeadString()))
+		return
 	}
-	if res.CacheHit {
-		// cache hit, return requested file
-		conn.Write(res.Resp.Body)
-	} else {
-		// Cache miss, cache the file
-		cachePath := "/Users/Ruba/Dev/cdn-edge-server/internal/cache/" + res.Filename
-		os.WriteFile(cachePath, res.Resp.Body, 0644)
+
+	// Cache file
+	if len(originResp.Body) > 0 {
+		os.WriteFile(cachePath, originResp.Body, 0644)
 	}
+
+	// Forward origin server response to client
+	conn.Write([]byte(originResp.HeadString()))
+	conn.Write(originResp.Body)
 }
 
 // handleHead processes an HTTP HEAD request for the given path using the given connection.
-// It returns a headResult containing metadata about the requested resource (HTTP response, name of requested file, whether it was a cache hit)
-// without sending a response body. If an error occurs while reading from the connection,
-// validating the path, or generating the response headers, the error is returned.
-func handleHead(conn net.Conn, path string) (*headResult, error) {
+func handleHead(conn net.Conn, path string) {
 	filename := filepath.Base(path) // filename w/o path for local cache storage/lookup
+	cachePath := "/Users/Ruba/Dev/cdn-edge-server/internal/cache/" + filename
 
-	// Check cache (if cache hit just return the requested file)
-	body, err := os.ReadFile("/Users/Ruba/Dev/cdn-edge-server/internal/cache/" + filename)
+	// Determine MIME (content-type header value)
+	mimeType := getMimeType(filename)
+
+	// Cache hit (HEAD only checks file existence, does not read body)
+	info, err := os.Stat(cachePath)
 	if err == nil {
-		// Cache hit
-		fmt.Println("Cache hit:", filename)
+		// Build and send HEAD resp
+		resp := http.BuildResponse(200, mimeType, nil).WithHeader("Content-Length", fmt.Sprint(info.Size()))
 
-		// Get file type (for response content type header field)
-		ext := strings.ToLower(filepath.Ext(filename))
-		mimeType := mime.TypeByExtension(ext)
-		if mimeType == "" {
-			mimeType = "application/octet-stream" // fallback
-		}
-
-		// Build and send headers
-		headers :=
-			"HTTP/1.0 200 OK\r\n" +
-				"Content-Length: " + fmt.Sprint(len(body)) + "\r\n" +
-				"Content-Type: " + mimeType + "\r\n" +
-				"\r\n"
-
-		conn.Write([]byte(headers))
-		// call Build Response !!!
-		resp := http.BuildResponse(200, mimeType, body)
-
-		res := &headResult{
-			Resp:     resp,
-			Filename: filename,
-			CacheHit: true,
-		}
-		return res, nil
+		conn.Write([]byte(resp.HeadString()))
+		return
 	}
 
-	// Cache miss, forward request to origin server
+	// Cache miss, forward HEAD request to origin
+	originResp, err := fetchFromOriginHead(filename)
+	if err != nil {
+		resp := http.BuildResponse(500, mimeType, nil)
+		conn.Write([]byte(resp.HeadString()))
+		return
+	}
+
+	// Forward origin server response to client (headers only)
+	conn.Write([]byte(originResp.HeadString()))
+}
+
+// fetchFromOriginGET sends a GET request to the origin server and returns its response.
+func fetchFromOriginGet(filename string) (*http.Response, error) {
 	connOrigin, err := net.Dial("tcp", ORIGIN_HOST+":"+ORIGIN_PORT)
 	if err != nil {
-		fmt.Println("Error connecting to origin server:", err)
+		return nil, err
 	}
 	defer connOrigin.Close()
 
-	// Send HTTP request to origin
-	fmt.Println("DEBUG filename", filename)
-	originReq := fmt.Sprintf("GET /%s HTTP/1.0\r\nHost: localhost\r\n\r\n", filename)
-	connOrigin.Write([]byte(originReq))
+	req := fmt.Sprintf("GET /%s HTTP/1.0\r\nHost: localhost\r\n\r\n", filename)
+	connOrigin.Write([]byte(req))
 
-	// Parse origin response
-	originReader := bufio.NewReader(connOrigin)
-	resp, _ := http.ParseResp(originReader)
-	fmt.Println(resp)
+	reader := bufio.NewReader(connOrigin)
+	return http.ParseResp(reader)
+}
 
-	// Forward origin response to clients (response + body)
-	conn.Write([]byte(resp.HeadString()))
-	return &headResult{
-		Resp:     resp,
-		Filename: filename,
-		CacheHit: true,
-	}, err
+// fetchFromOriginHead sends a HEAD request to the origin server and returns its response.
+func fetchFromOriginHead(filename string) (*http.Response, error) {
+	connOrigin, err := net.Dial("tcp", ORIGIN_HOST+":"+ORIGIN_PORT)
+	if err != nil {
+		return nil, err
+	}
+	defer connOrigin.Close()
+
+	req := fmt.Sprintf("HEAD /%s HTTP/1.0\r\nHost: localhost\r\n\r\n", filename)
+	connOrigin.Write([]byte(req))
+
+	reader := bufio.NewReader(connOrigin)
+	return http.ParseResp(reader)
+}
+
+// getMimeType returns the MIME tyope of the given file's name via its extension.
+// (Default: arbitrary binary data)
+func getMimeType(filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	mimeType := mime.TypeByExtension(ext)
+	if mimeType == "" {
+		mimeType = "application/octet-stream" // fallback (arbitrary binary data)
+	}
+
+	return mimeType
 }
