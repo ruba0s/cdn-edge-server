@@ -34,6 +34,10 @@ func HandleClient(conn net.Conn) {
 		handleGet(conn, req.Path)
 	case "HEAD":
 		handleHead(conn, req.Path)
+	// case "POST":
+	// 	handlePost(conn, req.Path)
+	// case "PUT":
+	// 	handlePut(conn, req.Path)
 	default:
 		fmt.Println("Use either GET or HEAD for now")
 	}
@@ -95,7 +99,8 @@ func handleHead(conn net.Conn, path string) {
 	// Cache miss, forward HEAD request to origin
 	originResp, err := fetchFromOriginHead(filename)
 	if err != nil {
-		resp := http.BuildResponse(500, mimeType, nil)
+		fmt.Println("DEBUG: origin resp", originResp, "error", err)
+		resp := http.BuildResponse(originResp.Status, mimeType, nil)
 		conn.Write([]byte(resp.HeadString()))
 		return
 	}
@@ -131,7 +136,13 @@ func fetchFromOriginHead(filename string) (*http.Response, error) {
 	connOrigin.Write([]byte(req))
 
 	reader := bufio.NewReader(connOrigin)
-	return http.ParseResp(reader)
+	resp, err := http.ParseResp(reader)
+	// Ignore body EOF errors (HEAD responses shouldn't have a body)
+	if err.Error() == "EOF" { // TODO: better approach ?? e.g. what if
+		return resp, nil
+	}
+
+	return resp, err
 }
 
 // getMimeType returns the MIME tyope of the given file's name via its extension.

@@ -11,7 +11,9 @@ import (
 type Request struct {
 	Method  string
 	Path    string
+	Version string
 	Headers map[string]string
+	Body    []byte // NEEDED FOR POST/PUT !!
 }
 
 type Response struct {
@@ -57,6 +59,7 @@ func ParseReq(reader *bufio.Reader) (*Request, error) {
 
 	method := parts[0]
 	path := parts[1]
+	version := parts[2]
 	headers := make(map[string]string)
 	for _, h := range lines[1:] {
 		parts := strings.SplitN(h, ":", 2)
@@ -72,6 +75,7 @@ func ParseReq(reader *bufio.Reader) (*Request, error) {
 	req := &Request{
 		Method:  method,
 		Path:    path,
+		Version: version,
 		Headers: headers,
 	}
 
@@ -121,26 +125,27 @@ func ParseResp(reader *bufio.Reader) (*Response, error) {
 		}
 	}
 
-	// TODO: If method isn't HEAD, read body of HTTP response ??
-	body := make([]byte, contentLength)
-	_, err := io.ReadFull(reader, body)
-	if err != nil {
-		fmt.Println("Error reading response body:", err)
-		return nil, err
-	}
-
+	// Partially parsed response
 	resp := &Response{
 		Version:    ver,
 		Status:     statCode,
 		StatusText: statTxt,
 		Headers:    headers,
-		Body:       body,
+		Body:       nil, // body initially nil (HEAD request responses don't include a body)
 	}
 
-	return resp, nil
+	body := make([]byte, contentLength)
+	_, err := io.ReadFull(reader, body)
+	if err != nil {
+		fmt.Println("Error reading response body:", err) // TODO: get rid of this error log msg cuz not an issue for HEAD responses
+		return resp, err                                 // for HEAD responses, ignore body errors
+	}
+	resp.Body = body // HTTP response body only if non-HEAD request
+
+	return resp, err
 }
 
-// FIX -- PUT IN response.go??
+// HeadString returns an HTTP-formatted string of the Response's header
 func (r *Response) HeadString() string {
 	var b strings.Builder
 
@@ -154,6 +159,7 @@ func (r *Response) HeadString() string {
 
 	// End of headers
 	b.WriteString("\r\n")
+	fmt.Println("DEBUG HeadString", b.String())
 
 	return b.String()
 }
