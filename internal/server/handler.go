@@ -2,8 +2,8 @@ package server
 
 import (
 	"bufio"
+	"cdn-edge-server/internal/http"
 	"fmt"
-	"io"
 	"mime"
 	"net"
 	"os"
@@ -21,65 +21,56 @@ func HandleClient(conn net.Conn) {
 
 	reader := bufio.NewReader(conn)
 
-	var headers []string
-	//var requestLine string // change headers to not contain the request line ???
+	// Parse client request
+	req, err := http.ParseReq(reader)
 
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			fmt.Println("Client disconnected.")
-			return
-		}
-
-		line = strings.TrimSpace(line)
-		if line == "" {
-			break // reached end of headers
-		}
-		fmt.Println("line:", line)
-
-		headers = append(headers, line)
+	if err != nil || req == nil {
+		panic(err)
 	}
 
-	if len(headers) == 0 {
-		return
-	}
-
-	fmt.Println(headers)
-
-	// Parse request line
-	requestLine := headers[0]
-	parts := strings.Split(requestLine, " ")
-	fmt.Println("parts:", parts)
-
-	if len(parts) < 3 { // part(s) of the request line are missing
-		return
-	}
-
-	reqMethod := parts[0]
-	reqPath := parts[1]
-
-	switch reqMethod {
+	switch req.Method {
 	case "GET":
-		handleGet(conn, parts)
+		handleGet(conn, req.Path)
 	case "HEAD":
-		handleHead(conn, parts)
+		handleHead(conn, req.Path)
 	default:
 		fmt.Println("Use either GET or HEAD for now")
 	}
-	fmt.Println("Method:", reqMethod, "Path:", reqPath)
 }
 
-/*
-Look up file or cached content
-Return headers + body
-*/
-func handleGet(conn net.Conn, reqParts []string) {
-	// Parse request line (mathod, path, filename)
-	path := reqParts[1]
+type headResult struct {
+	Resp     *http.Response
+	Filename string
+	CacheHit bool
+}
+
+// handleGet serves an HTTP GET request for the given path using the specified connection.
+// It calls handleHead to obtain metadata and content, writes the body to the connection on a cache
+// hit, and caches the file on a miss.
+func handleGet(conn net.Conn, path string) {
+	res, err := handleHead(conn, path)
+	if err != nil {
+		panic(err) // ?????!!! replace with returning error respones
+	}
+	if res.CacheHit {
+		// cache hit, return requested file
+		conn.Write(res.Resp.Body)
+	} else {
+		// Cache miss, cache the file
+		cachePath := "/Users/Ruba/Dev/cdn-edge-server/internal/cache/" + res.Filename
+		os.WriteFile(cachePath, res.Resp.Body, 0644)
+	}
+}
+
+// handleHead processes an HTTP HEAD request for the given path using the given connection.
+// It returns a headResult containing metadata about the requested resource (HTTP response, name of requested file, whether it was a cache hit)
+// without sending a response body. If an error occurs while reading from the connection,
+// validating the path, or generating the response headers, the error is returned.
+func handleHead(conn net.Conn, path string) (*headResult, error) {
 	filename := filepath.Base(path) // filename w/o path for local cache storage/lookup
 
 	// Check cache (if cache hit just return the requested file)
-	dat, err := os.ReadFile("/Users/Ruba/Dev/cdn-edge-server/internal/cache/" + filename)
+	body, err := os.ReadFile("/Users/Ruba/Dev/cdn-edge-server/internal/cache/" + filename)
 	if err == nil {
 		// Cache hit
 		fmt.Println("Cache hit:", filename)
@@ -91,19 +82,23 @@ func handleGet(conn net.Conn, reqParts []string) {
 			mimeType = "application/octet-stream" // fallback
 		}
 
-		// Build headers
+		// Build and send headers
 		headers :=
 			"HTTP/1.0 200 OK\r\n" +
-				"Content-Length: " + fmt.Sprint(len(dat)) + "\r\n" +
+				"Content-Length: " + fmt.Sprint(len(body)) + "\r\n" +
 				"Content-Type: " + mimeType + "\r\n" +
 				"\r\n"
 
-		// Send headers
 		conn.Write([]byte(headers))
+		// call Build Response !!!
+		resp := http.BuildResponse(200, mimeType, body)
 
-		// Send body
-		conn.Write(dat)
-		return
+		res := &headResult{
+			Resp:     resp,
+			Filename: filename,
+			CacheHit: true,
+		}
+		return res, nil
 	}
 
 	// Cache miss, forward request to origin server
@@ -120,54 +115,14 @@ func handleGet(conn net.Conn, reqParts []string) {
 
 	// Parse origin response
 	originReader := bufio.NewReader(connOrigin)
-
-	// Read origin headers
-	var oHeaders []string
-	for {
-		line, err := originReader.ReadString('\n')
-		if err != nil {
-			fmt.Println("Error reading origin headers:", err)
-			return
-		}
-
-		line = strings.TrimSpace(line)
-		if line == "" {
-			break // end headers
-		}
-
-		oHeaders = append(oHeaders, line)
-	}
-
-	fmt.Println("Origin headers:", oHeaders)
-
-	// Extract content length, read body of origin http response
-	var contentLength int
-	for _, h := range oHeaders {
-		if strings.HasPrefix(strings.ToLower(h), "content-length:") {
-			fmt.Sscanf(h, "Content-Length: %d", &contentLength)
-		}
-	}
-
-	body := make([]byte, contentLength)
-	_, err = io.ReadFull(originReader, body)
-	if err != nil {
-		fmt.Println("Error reading body:", err)
-		return
-	}
-
-	// Cache the file
-	cachePath := "/Users/Ruba/Dev/cdn-edge-server/internal/cache/" + filename
-	os.WriteFile(cachePath, body, 0644)
+	resp, _ := http.ParseResp(originReader)
+	fmt.Println(resp)
 
 	// Forward origin response to clients (response + body)
-	response := strings.Join(oHeaders, "\r\n") + "\r\n\r\n"
-	conn.Write([]byte(response))
-	conn.Write(body)
-}
-
-/*
-Return only head...
-*/
-func handleHead(conn net.Conn, reqParts []string) {
-
+	conn.Write([]byte(resp.HeadString()))
+	return &headResult{
+		Resp:     resp,
+		Filename: filename,
+		CacheHit: true,
+	}, err
 }
