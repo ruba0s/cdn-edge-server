@@ -2,6 +2,7 @@
 package main
 
 import (
+	"cdn-edge-server/internal/cache"
 	"cdn-edge-server/internal/server"
 )
 
@@ -12,6 +13,9 @@ const (
 
 func main() {
 	// logic to run terminal CLI (or GUI?)
+
+	// Initialize edge server's cache (load existing files if any)
+	cache.Init()
 
 	// Start TCP server and serve clients
 	srv := server.NewTCPServer(HOST, PORT, server.HandleClient)

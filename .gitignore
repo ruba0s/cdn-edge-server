@@ -6,10 +6,9 @@
 testing/
 internal/origin
 
+# Origin server storage and edge server cache files
 internal/storage/files/*
-internal/storage/uploads/*
-internal/cache/*
+internal/cache/files/*
 
 !internal/storage/files/.gitkeep
-!internal/storage/uploads/.gitkeep
-!internal/cache/.gitkeep
+!internal/cache/files/.gitkeep

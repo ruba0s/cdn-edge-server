@@ -3,6 +3,8 @@ package server
 
 import (
 	"bufio"
+	"cdn-edge-server/internal/cache"
+	"cdn-edge-server/internal/config"
 	"cdn-edge-server/internal/http"
 	"fmt"
 	"mime"
@@ -10,11 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-)
-
-const (
-	ORIGIN_HOST = "127.0.0.1"
-	ORIGIN_PORT = "4396"
 )
 
 func HandleClient(conn net.Conn) {
@@ -30,31 +27,32 @@ func HandleClient(conn net.Conn) {
 		panic(err)
 	}
 
+	handleRequest(conn, req)
+}
+
+func handleRequest(conn net.Conn, req *http.Request) {
 	switch req.Method {
 	case "GET":
-		handleGet(conn, req.Path)
+		handleGET(conn, req.Path)
 	case "HEAD":
-		handleHead(conn, req.Path)
-	// case "POST":
-	// 	handlePost(conn, req.Path)
-	// case "PUT":
-	// 	handlePut(conn, req.Path)
+		handleHEAD(conn, req.Path)
+	case "POST", "PUT":
+		handleWriteReq(conn, req)
 	default:
-		fmt.Println("Use either GET or HEAD for now")
+		// TODO: unsported request error!!!
 	}
 }
 
 // handleGet serves an HTTP GET request for the given path using the specified connection.
-func handleGet(conn net.Conn, path string) {
+func handleGET(conn net.Conn, path string) {
 	filename := filepath.Base(path)
-	cachePath := "/Users/Ruba/Dev/cdn-edge-server/internal/cache/" + filename
 
 	// Determine MIME (content-type header value)
 	mimeType := getMimeType(filename)
 
-	dat, err := os.ReadFile(cachePath)
-	if err == nil {
+	if cache.Has(filename) {
 		// Cache hit
+		dat, _ := cache.Get(filename) // TODO error handling here??
 		resp := http.BuildResponse(200, mimeType, dat)
 		conn.Write([]byte(resp.HeadString()))
 		conn.Write(resp.Body)
@@ -62,7 +60,7 @@ func handleGet(conn net.Conn, path string) {
 	}
 
 	// Cache miss, fetch from origin
-	originResp, err := fetchFromOrigin("GET", filename)
+	originResp, err := fetchFromOrigin("GET", filename, nil)
 	if err != nil {
 		resp := http.BuildResponse(500, mimeType, nil)
 		conn.Write([]byte(resp.HeadString()))
@@ -70,8 +68,8 @@ func handleGet(conn net.Conn, path string) {
 	}
 
 	// Cache file
-	if len(originResp.Body) > 0 {
-		os.WriteFile(cachePath, originResp.Body, 0644)
+	if originResp.Status == 200 {
+		cache.Add(filename, originResp.Body)
 	}
 
 	// Forward origin server response to client
@@ -80,9 +78,9 @@ func handleGet(conn net.Conn, path string) {
 }
 
 // handleHead processes an HTTP HEAD request for the given path using the given connection.
-func handleHead(conn net.Conn, path string) {
+func handleHEAD(conn net.Conn, path string) {
 	filename := filepath.Base(path) // filename w/o path for local cache storage/lookup
-	cachePath := "/Users/Ruba/Dev/cdn-edge-server/internal/cache/" + filename
+	cachePath := filepath.Join(config.CacheDir, filename)
 
 	// Determine MIME (content-type header value)
 	mimeType := getMimeType(filename)
@@ -98,7 +96,7 @@ func handleHead(conn net.Conn, path string) {
 	}
 
 	// Cache miss, forward HEAD request to origin
-	originResp, err := fetchFromOrigin("HEAD", filename)
+	originResp, err := fetchFromOrigin("HEAD", filename, nil)
 	if err != nil {
 		fmt.Println("DEBUG: origin resp", originResp, "error", err)
 		resp := http.BuildResponse(originResp.Status, mimeType, nil)
@@ -110,17 +108,43 @@ func handleHead(conn net.Conn, path string) {
 	conn.Write([]byte(originResp.HeadString()))
 }
 
+// handleWriteReq proccesses a POST or PUT request for the given file path using the given connection
+// by forwarding them to the origin server.
+func handleWriteReq(conn net.Conn, req *http.Request) {
+	filename := filepath.Base(req.Path) // filename w/o path for local cache storage/lookup
+	mimeType := getMimeType(filename)   // Determine MIME (content-type header value)
+
+	// For POST/PUT requests, forward request to origin server
+	originResp, err := fetchFromOrigin(req.Method, filename, req.Body)
+	if err != nil {
+		resp := http.BuildResponse(500, mimeType, nil)
+		conn.Write([]byte(resp.HeadString()))
+		return
+	}
+
+	// Forward origin response to client
+	conn.Write([]byte(originResp.HeadString()))
+	conn.Write(originResp.Body)
+}
+
 // fetchFromOrigin forwards the client's HTTP request with the given method and filename to the origin server,
 // and fetches and returns the origin server's response.
-func fetchFromOrigin(method string, filename string) (*http.Response, error) {
-	connOrigin, err := net.Dial("tcp", ORIGIN_HOST+":"+ORIGIN_PORT)
+func fetchFromOrigin(method, filename string, body []byte) (*http.Response, error) {
+	connOrigin, err := net.Dial("tcp", config.OriginHost+":"+config.OriginPort)
 	if err != nil {
 		return nil, err
 	}
 	defer connOrigin.Close()
 
-	req := fmt.Sprintf(method+" /%s HTTP/1.0\r\nHost: localhost\r\n\r\n", filename)
-	connOrigin.Write([]byte(req))
+	reqStr := fmt.Sprintf(
+		"%s /%s HTTP/1.0\r\nHost: localhost\r\nContent-Length: %d\r\n\r\n",
+		method, filename, len(body),
+	)
+	connOrigin.Write([]byte(reqStr))
+
+	if len(body) > 0 {
+		connOrigin.Write(body)
+	}
 
 	reader := bufio.NewReader(connOrigin)
 	resp, err := http.ParseResp(reader)
