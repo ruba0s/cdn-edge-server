@@ -78,6 +78,20 @@ func ParseReq(reader *bufio.Reader) (*Request, error) {
 		Path:    path,
 		Version: version,
 		Headers: headers,
+		Body:    nil,
+	}
+
+	// Parse body (for POST, PUT requests)
+	if cl, ok := headers["Content-Length"]; ok {
+		n, _ := strconv.Atoi(cl)
+		if n > 0 {
+			body := make([]byte, n)
+			_, err := io.ReadFull(reader, body)
+			if err != nil {
+				return nil, err
+			}
+			req.Body = body
+		}
 	}
 
 	return req, nil
