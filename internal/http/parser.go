@@ -28,6 +28,7 @@ type Response struct {
 // and headers until it encounters a blank line.
 // Returns a populated Request on success, nil if the request is empty or malformed,
 // and an error if the reader encounters an I/O issue.
+// TODO: ADD BODY PARSING (for PUSH/PUT requests)
 func ParseReq(reader *bufio.Reader) (*Request, error) {
 	var lines []string
 	for {
@@ -82,13 +83,15 @@ func ParseReq(reader *bufio.Reader) (*Request, error) {
 	return req, nil
 }
 
+// ParseResp reads an HTTP response from the given bufio.Reader and parses it, returning
+// a Response struct. It also returns an error if the status line is of an invalid format,
+// or if an error occurred while attempting to parse the response body.
 func ParseResp(reader *bufio.Reader) (*Response, error) {
 	var lines []string
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			fmt.Println("Error reading response headers:", err)
-			return nil, err
+			return nil, fmt.Errorf("failed to parse response status line: %w", err)
 		}
 
 		line = strings.TrimSpace(line)
@@ -134,13 +137,16 @@ func ParseResp(reader *bufio.Reader) (*Response, error) {
 		Body:       nil, // body initially nil (HEAD request responses don't include a body)
 	}
 
+	if contentLength == 0 {
+		return resp, nil
+	}
+
 	body := make([]byte, contentLength)
 	_, err := io.ReadFull(reader, body)
 	if err != nil {
-		fmt.Println("Error reading response body:", err) // TODO: get rid of this error log msg cuz not an issue for HEAD responses
-		return resp, err                                 // for HEAD responses, ignore body errors
+		return resp, err // for HEAD responses, ignore body errors
 	}
-	resp.Body = body // HTTP response body only if non-HEAD request
+	resp.Body = body // include HTTP response body only if non-HEAD request
 
 	return resp, err
 }

@@ -1,3 +1,4 @@
+// Edge server handler
 package server
 
 import (
@@ -61,7 +62,7 @@ func handleGet(conn net.Conn, path string) {
 	}
 
 	// Cache miss, fetch from origin
-	originResp, err := fetchFromOriginGet(filename)
+	originResp, err := fetchFromOrigin("GET", filename)
 	if err != nil {
 		resp := http.BuildResponse(500, mimeType, nil)
 		conn.Write([]byte(resp.HeadString()))
@@ -97,7 +98,7 @@ func handleHead(conn net.Conn, path string) {
 	}
 
 	// Cache miss, forward HEAD request to origin
-	originResp, err := fetchFromOriginHead(filename)
+	originResp, err := fetchFromOrigin("HEAD", filename)
 	if err != nil {
 		fmt.Println("DEBUG: origin resp", originResp, "error", err)
 		resp := http.BuildResponse(originResp.Status, mimeType, nil)
@@ -109,40 +110,26 @@ func handleHead(conn net.Conn, path string) {
 	conn.Write([]byte(originResp.HeadString()))
 }
 
-// fetchFromOriginGET sends a GET request to the origin server and returns its response.
-func fetchFromOriginGet(filename string) (*http.Response, error) {
+// fetchFromOrigin forwards the client's HTTP request with the given method and filename to the origin server,
+// and fetches and returns the origin server's response.
+func fetchFromOrigin(method string, filename string) (*http.Response, error) {
 	connOrigin, err := net.Dial("tcp", ORIGIN_HOST+":"+ORIGIN_PORT)
 	if err != nil {
 		return nil, err
 	}
 	defer connOrigin.Close()
 
-	req := fmt.Sprintf("GET /%s HTTP/1.0\r\nHost: localhost\r\n\r\n", filename)
-	connOrigin.Write([]byte(req))
-
-	reader := bufio.NewReader(connOrigin)
-	return http.ParseResp(reader)
-}
-
-// fetchFromOriginHead sends a HEAD request to the origin server and returns its response.
-func fetchFromOriginHead(filename string) (*http.Response, error) {
-	connOrigin, err := net.Dial("tcp", ORIGIN_HOST+":"+ORIGIN_PORT)
-	if err != nil {
-		return nil, err
-	}
-	defer connOrigin.Close()
-
-	req := fmt.Sprintf("HEAD /%s HTTP/1.0\r\nHost: localhost\r\n\r\n", filename)
+	req := fmt.Sprintf(method+" /%s HTTP/1.0\r\nHost: localhost\r\n\r\n", filename)
 	connOrigin.Write([]byte(req))
 
 	reader := bufio.NewReader(connOrigin)
 	resp, err := http.ParseResp(reader)
-	// Ignore body EOF errors (HEAD responses shouldn't have a body)
-	if err.Error() == "EOF" { // TODO: better approach ?? e.g. what if
-		return resp, nil
+	if resp == nil || (err != nil && method != "HEAD" && err.Error() != "EOF") {
+		// EOF errors are ignored for HEAD requests (unless the origin server returns a nil resp)
+		return nil, err
 	}
 
-	return resp, err
+	return resp, nil
 }
 
 // getMimeType returns the MIME tyope of the given file's name via its extension.
