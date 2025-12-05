@@ -37,7 +37,7 @@ func Has(name string) bool {
 
 // Get reads and returns the given filename from the cache (only called in case of cache hit).
 func Get(name string) ([]byte, error) {
-	return os.ReadFile(config.CacheDir + name)
+	return os.ReadFile(filepath.Join(config.CacheDir, name))
 }
 
 // Add adds the file with the given name to the cache.
@@ -45,6 +45,17 @@ func Add(name string, data []byte) error {
 	// Cannot write git files to cache or server storage
 	if name == ".gitkeep" {
 		return fmt.Errorf(".gitkeep cannot be added to server storage")
+	}
+
+	// If file is already in cache, overwrite
+	if present[name] {
+		return os.WriteFile(filepath.Join(config.CacheDir, name), data, 0644)
+	}
+
+	// Eviction check (to ensure queue size remains within the max cache size)
+	fmt.Println("DEBUG QUEUE:", queue)
+	if len(queue) >= MaxCacheFiles {
+		evict()
 	}
 
 	// Write file
@@ -57,12 +68,6 @@ func Add(name string, data []byte) error {
 	queue = append(queue, name)
 	present[name] = true
 
-	// Eviction check
-	fmt.Println("DEBUG QUEUE:", queue)
-	if len(queue) > MaxCacheFiles {
-		evict()
-	}
-
 	return nil
 }
 
@@ -71,7 +76,7 @@ func evict() {
 	oldest := queue[0]
 	queue = queue[1:]       // pop front of queue
 	delete(present, oldest) // mark popped file as unpresent in queue
-	os.Remove(config.CacheDir + oldest)
+	os.Remove(filepath.Join(config.CacheDir, oldest))
 }
 
 // Remove removes the file with the given name from the cache, if present.
