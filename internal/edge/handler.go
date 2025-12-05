@@ -23,6 +23,10 @@ func HandleClient(conn net.Conn) {
 	req, err := http.ParseReq(reader)
 
 	if err != nil || req == nil {
+		if err != nil && err.Error() == "EOF" {
+			// Health check, silently ignore
+			return
+		}
 		fmt.Println("Error parsing request:", err)
 		resp := http.BuildErrorResponse(400)
 		conn.Write([]byte(resp.HeadString()))
