@@ -6,7 +6,6 @@
 
 # Testing dirs and data
 testing/
-internal/origin
 
 # Origin server storage and edge server cache files
 internal/storage/files/*
