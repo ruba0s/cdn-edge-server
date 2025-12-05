@@ -50,7 +50,7 @@ cdn-edge-server/
 │   └── config/
 │       └── config.go        # Configuration loader
 │
-├── .env.template            # Environment template
+├── .env.template            # .env template
 ├── go.mod
 └── README.md
 ```
@@ -368,8 +368,6 @@ The cache holds a maximum of 5 files. When a 6th file is requested:
    - `file2.txt` is evicted
 
 ## Testing Concurrency
-
-(To be added)
 
 ### Using curl
 ```bash
