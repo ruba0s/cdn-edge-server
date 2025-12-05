@@ -45,6 +45,7 @@ func handleRequest(conn net.Conn, req *http.Request) {
 		// Unsupported method
 		resp := http.BuildErrorResponse(405)
 		conn.Write([]byte(resp.HeadString()))
+		conn.Write(resp.Body)
 	}
 }
 
@@ -63,6 +64,7 @@ func handleGET(conn net.Conn, path string) {
 			resp := http.BuildErrorResponse(500)
 			conn.Write([]byte(resp.HeadString()))
 			conn.Write(resp.Body)
+			return
 		}
 
 		resp := http.BuildResponse(200, mimeType, dat)
@@ -74,8 +76,9 @@ func handleGET(conn net.Conn, path string) {
 	// Cache miss, fetch from origin
 	originResp, err := fetchFromOrigin("GET", filename, nil)
 	if err != nil {
-		resp := http.BuildErrorResponse(500)
+		resp := http.BuildErrorResponse(502)
 		conn.Write([]byte(resp.HeadString()))
+		conn.Write(resp.Body)
 		return
 	}
 
@@ -101,7 +104,7 @@ func handleHEAD(conn net.Conn, path string) {
 	info, err := os.Stat(cachePath)
 	if err == nil {
 		// Build and send HEAD resp
-		resp := http.BuildResponse(200, mimeType, nil).WithHeader("Content-Length", fmt.Sprint(info.Size())) // TODO: refine
+		resp := http.BuildResponse(200, mimeType, nil).WithHeader("Content-Length", fmt.Sprint(info.Size()))
 
 		conn.Write([]byte(resp.HeadString()))
 		return
@@ -111,8 +114,9 @@ func handleHEAD(conn net.Conn, path string) {
 	originResp, err := fetchFromOrigin("HEAD", filename, nil)
 	if err != nil {
 		fmt.Println("DEBUG: origin resp", originResp, "error", err)
-		resp := http.BuildResponse(originResp.Status, mimeType, nil)
+		resp := http.BuildErrorResponse(502)
 		conn.Write([]byte(resp.HeadString()))
+		conn.Write(resp.Body)
 		return
 	}
 
@@ -128,13 +132,16 @@ func handleWriteReq(conn net.Conn, req *http.Request) {
 	// For POST/PUT requests, forward request to origin server
 	originResp, err := fetchFromOrigin(req.Method, filename, req.Body)
 	if err != nil {
-		resp := http.BuildErrorResponse(500) // TODO: double check status code
+		resp := http.BuildErrorResponse(502)
 		conn.Write([]byte(resp.HeadString()))
+		conn.Write(resp.Body)
 		return
 	}
 
-	// Remove file from cache (for PUT requests) if present
-	cache.Remove(filename)
+	// Remove file from cache (for PUT requests) if write to origin succeeded
+	if originResp.Status == 200 {
+		cache.Remove(filename)
+	}
 
 	// Forward origin response to client
 	conn.Write([]byte(originResp.HeadString()))
