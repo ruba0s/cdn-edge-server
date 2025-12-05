@@ -54,7 +54,6 @@ func handle(conn net.Conn) {
 
 func serveGET(conn net.Conn, filename string) {
 	path := filepath.Join(config.StorageDir, filename)
-	fmt.Println("DEBUG origin path for GET", path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		write404(conn)
@@ -68,7 +67,6 @@ func serveGET(conn net.Conn, filename string) {
 
 func serveHEAD(conn net.Conn, filename string) {
 	path := filepath.Join(config.StorageDir, filename)
-	fmt.Println("DEBUG origin path for HEAD", path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		write404(conn)

@@ -27,7 +27,6 @@ func HandleClient(conn net.Conn) {
 			// Health check, silently ignore
 			return
 		}
-		fmt.Println("Error parsing request:", err)
 		resp := http.BuildErrorResponse(400)
 		conn.Write([]byte(resp.HeadString()))
 		conn.Write(resp.Body)
@@ -117,7 +116,6 @@ func handleHEAD(conn net.Conn, path string) {
 	// Cache miss, forward HEAD request to origin
 	originResp, err := fetchFromOrigin("HEAD", filename, nil)
 	if err != nil {
-		fmt.Println("DEBUG: origin resp", originResp, "error", err)
 		resp := http.BuildErrorResponse(502)
 		conn.Write([]byte(resp.HeadString()))
 		conn.Write(resp.Body)

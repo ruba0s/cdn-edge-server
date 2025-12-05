@@ -34,7 +34,6 @@ func ParseReq(reader *bufio.Reader) (*Request, error) {
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			fmt.Println("Client disconnected.")
 			return nil, err
 		}
 
@@ -132,7 +131,6 @@ func ParseResp(reader *bufio.Reader) (*Response, error) {
 		value := strings.TrimSpace(parts[1])
 		headers[key] = value
 	}
-	fmt.Println(headers)
 
 	// Extract content length
 	var contentLength int
@@ -179,7 +177,6 @@ func (resp *Response) HeadString() string {
 
 	// End of headers
 	b.WriteString("\r\n")
-	fmt.Println("DEBUG HeadString", b.String())
 
 	return b.String()
 }

@@ -27,7 +27,7 @@ func Init() {
 		queue = append(queue, name)
 		present[name] = true
 	}
-	fmt.Println("DEBUG QUEUE:", queue)
+	fmt.Printf("[Cache] Initialized with %d files\n", len(queue))
 }
 
 // Has checks if the file with the given name is present in the cache.
@@ -49,11 +49,26 @@ func Add(name string, data []byte) error {
 
 	// If file is already in cache, overwrite
 	if present[name] {
-		return os.WriteFile(filepath.Join(config.CacheDir, name), data, 0644)
+		// Update existing file in local cache storage
+		err := os.WriteFile(filepath.Join(config.CacheDir, name), data, 0644)
+		if err != nil {
+			return err
+		}
+
+		// Update cached file's position in queue (remove from current position then enque)
+		for i, f := range queue {
+			if f == name {
+				queue = append(queue[:i], queue[i+1:]...)
+				break
+			}
+		}
+		queue = append(queue, name)
+
+		fmt.Printf("[Cache] Updated existing: %s\n", name)
+		return nil
 	}
 
 	// Eviction check (to ensure queue size remains within the max cache size)
-	fmt.Println("DEBUG QUEUE:", queue)
 	if len(queue) >= MaxCacheFiles {
 		evict()
 	}
@@ -68,6 +83,8 @@ func Add(name string, data []byte) error {
 	queue = append(queue, name)
 	present[name] = true
 
+	fmt.Printf("[Cache] Added: %s (queue size: %d/%d)\n", name, len(queue), MaxCacheFiles)
+
 	return nil
 }
 
@@ -76,6 +93,7 @@ func evict() {
 	oldest := queue[0]
 	queue = queue[1:]       // pop front of queue
 	delete(present, oldest) // mark popped file as unpresent in queue
+	fmt.Printf("[Cache] Evicted: %s (oldest file in cache)\n", oldest)
 	os.Remove(filepath.Join(config.CacheDir, oldest))
 }
 
@@ -98,6 +116,7 @@ func Remove(filename string) {
 
 	// Delete file from disk
 	os.Remove(filepath.Join(config.CacheDir, filename))
+	fmt.Printf("[Cache] Invalidated: %s (due to write operation)\n", filename)
 }
 
 // CacheContent returns a copy of the cache queue (list of cached filenames in order)
