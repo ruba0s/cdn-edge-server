@@ -166,14 +166,14 @@ func ParseResp(reader *bufio.Reader) (*Response, error) {
 }
 
 // HeadString returns an HTTP-formatted string of the Response's header
-func (r *Response) HeadString() string {
+func (resp *Response) HeadString() string {
 	var b strings.Builder
 
 	// Status line
-	b.WriteString(fmt.Sprintf("%s %d %s\r\n", r.Version, r.Status, r.StatusText))
+	b.WriteString(fmt.Sprintf("%s %d %s\r\n", resp.Version, resp.Status, resp.StatusText))
 
 	// Headers
-	for k, v := range r.Headers {
+	for k, v := range resp.Headers {
 		b.WriteString(fmt.Sprintf("%s: %s\r\n", k, v))
 	}
 

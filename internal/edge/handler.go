@@ -1,5 +1,5 @@
 // Edge server handler
-package server
+package edge
 
 import (
 	"bufio"
@@ -23,8 +23,11 @@ func HandleClient(conn net.Conn) {
 	req, err := http.ParseReq(reader)
 
 	if err != nil || req == nil {
-		fmt.Println("PANIC HERE LINE 28")
-		panic(err)
+		fmt.Println("Error parsing request:", err)
+		resp := http.BuildErrorResponse(400)
+		conn.Write([]byte(resp.HeadString()))
+		conn.Write(resp.Body)
+		return
 	}
 
 	handleRequest(conn, req)
@@ -39,7 +42,9 @@ func handleRequest(conn net.Conn, req *http.Request) {
 	case "POST", "PUT":
 		handleWriteReq(conn, req)
 	default:
-		// TODO: unsported request error!!!
+		// Unsupported method
+		resp := http.BuildErrorResponse(405)
+		conn.Write([]byte(resp.HeadString()))
 	}
 }
 
@@ -52,7 +57,14 @@ func handleGET(conn net.Conn, path string) {
 
 	if cache.Has(filename) {
 		// Cache hit
-		dat, _ := cache.Get(filename) // TODO error handling here??
+		dat, err := cache.Get(filename)
+		if err != nil {
+			// Edge server error (failed to load cache file)
+			resp := http.BuildErrorResponse(500)
+			conn.Write([]byte(resp.HeadString()))
+			conn.Write(resp.Body)
+		}
+
 		resp := http.BuildResponse(200, mimeType, dat)
 		conn.Write([]byte(resp.HeadString()))
 		conn.Write(resp.Body)
@@ -62,7 +74,7 @@ func handleGET(conn net.Conn, path string) {
 	// Cache miss, fetch from origin
 	originResp, err := fetchFromOrigin("GET", filename, nil)
 	if err != nil {
-		resp := http.BuildResponse(500, mimeType, nil)
+		resp := http.BuildErrorResponse(500)
 		conn.Write([]byte(resp.HeadString()))
 		return
 	}
@@ -89,7 +101,7 @@ func handleHEAD(conn net.Conn, path string) {
 	info, err := os.Stat(cachePath)
 	if err == nil {
 		// Build and send HEAD resp
-		resp := http.BuildResponse(200, mimeType, nil).WithHeader("Content-Length", fmt.Sprint(info.Size()))
+		resp := http.BuildResponse(200, mimeType, nil).WithHeader("Content-Length", fmt.Sprint(info.Size())) // TODO: refine
 
 		conn.Write([]byte(resp.HeadString()))
 		return
@@ -112,15 +124,17 @@ func handleHEAD(conn net.Conn, path string) {
 // by forwarding them to the origin server.
 func handleWriteReq(conn net.Conn, req *http.Request) {
 	filename := filepath.Base(req.Path) // filename w/o path for local cache storage/lookup
-	mimeType := getMimeType(filename)   // Determine MIME (content-type header value)
 
 	// For POST/PUT requests, forward request to origin server
 	originResp, err := fetchFromOrigin(req.Method, filename, req.Body)
 	if err != nil {
-		resp := http.BuildResponse(500, mimeType, nil)
+		resp := http.BuildErrorResponse(500) // TODO: double check status code
 		conn.Write([]byte(resp.HeadString()))
 		return
 	}
+
+	// Remove file from cache (for PUT requests) if present
+	cache.Remove(filename)
 
 	// Forward origin response to client
 	conn.Write([]byte(originResp.HeadString()))

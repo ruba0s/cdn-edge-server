@@ -7,7 +7,9 @@ var statusTextMap = map[int]string{
 	400: "Bad Request",
 	403: "Forbidden",
 	404: "Not Found",
-	500: "Internal Server Error", // origin server down?
+	405: "Method Not Allowed",
+	500: "Internal Server Error",
+	502: "Bad Gateway", // server unreachable, etc.
 }
 
 // NewResponse initializes a Response with the given status code and the appropriate status text.
@@ -26,7 +28,27 @@ func BuildResponse(status int, contentType string, body []byte) *Response {
 	resp := NewResponse(status)
 	resp.Body = body
 	resp.Headers["Content-Type"] = contentType
+	if body != nil { // Set Content-Length
+		resp.Headers["Content-Length"] = fmt.Sprint(len(body))
+	}
+	return resp
+}
+
+// BuildErrorResponse builds and returns an error Response with the given status code.
+// The response body contains a plain text error message.
+func BuildErrorResponse(status int) *Response {
+	statusText := statusTextMap[status]
+	if statusText == "" {
+		statusText = "Unknown Error"
+	}
+
+	body := []byte(statusText)
+
+	resp := NewResponse(status)
+	resp.Body = body
+	resp.Headers["Content-Type"] = "text/plain"
 	resp.Headers["Content-Length"] = fmt.Sprint(len(body))
+
 	return resp
 }
 

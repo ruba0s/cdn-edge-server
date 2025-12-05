@@ -11,8 +11,6 @@ const (
 	MaxCacheFiles = 5
 )
 
-// var CacheDir = "/Users/Ruba/Dev/cdn-edge-server/internal/cache/"
-
 var queue []string                  // FIFO queue
 var present = make(map[string]bool) // filename → bool (is present?)
 
@@ -74,4 +72,32 @@ func evict() {
 	queue = queue[1:]       // pop front of queue
 	delete(present, oldest) // mark popped file as unpresent in queue
 	os.Remove(config.CacheDir + oldest)
+}
+
+// Remove removes the file with the given name from the cache, if present.
+func Remove(filename string) {
+	if !present[filename] {
+		return
+	}
+
+	// Remove from queue
+	for i, f := range queue {
+		if f == filename {
+			queue = append(queue[:i], queue[i+1:]...)
+			break
+		}
+	}
+
+	// Remove from present map
+	delete(present, filename)
+
+	// Delete file from disk
+	os.Remove(filepath.Join(config.CacheDir, filename))
+}
+
+// CacheContent returns a copy of the cache queue (list of cached filenames in order)
+func CacheContent() []string {
+	result := make([]string, len(queue))
+	copy(result, queue)
+	return result
 }
